@@ -1,4 +1,3 @@
-schedule
 requests
 python-dotenv
 duckdb
