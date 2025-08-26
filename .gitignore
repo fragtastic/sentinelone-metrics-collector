@@ -1,0 +1,8 @@
+*.db
+*.duckdb
+*.wal
+.venv/
+.env
+*.xlsx
+*.csv
+queries.json

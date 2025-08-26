@@ -1,0 +1,8 @@
+[
+    "isDecommissioned=True",
+    "isDecommissioned=True&isActive=True",
+    "isDecommissioned=True&isActive=False",
+    "isDecommissioned=False",
+    "isDecommissioned=False&isActive=True",
+    "isDecommissioned=False&isActive=False"
+]
