@@ -54,8 +54,10 @@ def get_count_query(params):
         return response.json()['data']['total']
     except requests.exceptions.RequestException as e:
         print(f"Error making GET request to {url}: {e}")
-        return None
-
+    except ValueError as e:
+        print(f"Invalid JSON from {url}: {e}")
+    return None
+    
 try:
     if _INITIAL_RUN:
         print('Performing initial startup collection.')
