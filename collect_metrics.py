@@ -48,7 +48,7 @@ def get_count_query(params):
         'Authorization': 'ApiToken ' + os.getenv('SENTINELONE_AUTH_TOKEN')
     }
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=(3, 6))
         response.raise_for_status()
         # print(response.json())
         return response.json()['data']['total']
