@@ -270,6 +270,51 @@ def daily_max() -> Any:
     ])
 
 
+@app.get("/metrics/hourly-max")
+def hourly_max() -> Any:
+    days = max(1, min(int(request.args.get("days", "7")), 3650))
+    query_filter = request.args.get("query")
+
+    con = get_read_connection()
+    try:
+        if query_filter:
+            rows = con.execute(
+                """
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MAX(Result) AS max_result
+                FROM s1_metrics
+                WHERE Timestamp >= now() - (? * INTERVAL '1 day')
+                  AND Query = ?
+                GROUP BY hour, Query
+                ORDER BY hour DESC, Query
+                """,
+                (days, query_filter),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                """
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MAX(Result) AS max_result
+                FROM s1_metrics
+                WHERE Timestamp >= now() - (? * INTERVAL '1 day')
+                GROUP BY hour, Query
+                ORDER BY hour DESC, Query
+                """,
+                (days,),
+            ).fetchall()
+    finally:
+        con.close()
+
+    return jsonify([
+        {"hour": str(r[0]), "query": r[1], "max_result": r[2]}
+        for r in rows
+    ])
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SentinelOne metrics collector + API server")
     parser.add_argument("--host", default="0.0.0.0")

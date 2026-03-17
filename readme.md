@@ -62,6 +62,12 @@ curl "http://localhost:8080/metrics/range?from=2026-03-17T00:00:00Z&to=2026-03-1
 - Query params:
   - `days` (default 30, max 3650)
 
+### Hourly max per query (last X days)
+- `GET /metrics/hourly-max`
+- Query params:
+  - `days` (default 7, max 3650)
+  - `query` (optional exact query filter)
+
 ## Docker deployment
 
 Build image:
