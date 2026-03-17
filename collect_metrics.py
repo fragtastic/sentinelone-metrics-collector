@@ -208,6 +208,7 @@ def metrics_latest() -> Any:
 @app.get("/metrics/range")
 def metrics_range() -> Any:
     # Example: /metrics/range?from=2026-03-01T00:00:00Z&to=2026-03-02T00:00:00Z
+    # Returns hourly aggregates per query (not raw per-minute points).
     from_ts = request.args.get("from")
     to_ts = request.args.get("to")
     query_filter = request.args.get("query")
@@ -236,12 +237,19 @@ def metrics_range() -> Any:
         if query_filter:
             rows = con.execute(
                 """
-                SELECT Timestamp, Query, Result
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MIN(Result) AS min_result,
+                    AVG(Result)::DOUBLE AS avg_result,
+                    MAX(Result) AS max_result,
+                    COUNT(Result) AS sample_count
                 FROM s1_metrics
                 WHERE Timestamp >= ?::TIMESTAMPTZ
                   AND Timestamp < ?::TIMESTAMPTZ
                   AND Query = ?
-                ORDER BY Timestamp ASC
+                GROUP BY hour, Query
+                ORDER BY hour ASC, Query
                 LIMIT ?
                 """,
                 (from_ts, to_ts, query_filter, limit),
@@ -249,11 +257,18 @@ def metrics_range() -> Any:
         else:
             rows = con.execute(
                 """
-                SELECT Timestamp, Query, Result
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MIN(Result) AS min_result,
+                    AVG(Result)::DOUBLE AS avg_result,
+                    MAX(Result) AS max_result,
+                    COUNT(Result) AS sample_count
                 FROM s1_metrics
                 WHERE Timestamp >= ?::TIMESTAMPTZ
                   AND Timestamp < ?::TIMESTAMPTZ
-                ORDER BY Timestamp ASC
+                GROUP BY hour, Query
+                ORDER BY hour ASC, Query
                 LIMIT ?
                 """,
                 (from_ts, to_ts, limit),
@@ -263,7 +278,14 @@ def metrics_range() -> Any:
 
     return jsonify(
         [
-            {"timestamp": str(r[0]), "query": r[1], "result": r[2]}
+            {
+                "hour": str(r[0]),
+                "query": r[1],
+                "min_result": r[2],
+                "avg_result": r[3],
+                "max_result": r[4],
+                "sample_count": r[5],
+            }
             for r in rows
         ]
     )

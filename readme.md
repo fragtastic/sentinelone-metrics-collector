@@ -49,8 +49,10 @@ python collect_metrics.py --host 0.0.0.0 --port 8080 --initial-run
   - `limit` (default 200, max 2000)
   - `query` (optional exact query filter)
 
-### Time range metrics
+### Time range metrics (hourly aggregates)
 - `GET /metrics/range?from=<iso>&to=<iso>`
+- Returns hourly aggregates per query (not raw minute-level rows):
+  - `min_result`, `avg_result`, `max_result`, `sample_count`
 - Optional query params:
   - `query` (exact query filter)
   - `limit` (max `API_MAX_RESULT_ROWS`, default same)
