@@ -6,3 +6,4 @@
 *.xlsx
 *.csv
 queries.json
+__pycache__/
