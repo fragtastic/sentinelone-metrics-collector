@@ -156,7 +156,11 @@ def get_read_connection() -> duckdb.DuckDBPyConnection:
 
 
 def _parse_iso_ts(value: str) -> datetime:
-    # Supports RFC3339 Z suffix.
+    # Supports:
+    # - date-only: YYYY-MM-DD (interpreted as 00:00:00 UTC)
+    # - full ISO timestamp, including RFC3339 Z suffix.
+    if len(value) == 10:
+        return datetime.fromisoformat(value + "T00:00:00+00:00")
     normalized = value.replace("Z", "+00:00")
     return datetime.fromisoformat(normalized)
 
@@ -207,7 +211,9 @@ def metrics_latest() -> Any:
 
 @app.get("/metrics/range")
 def metrics_range() -> Any:
-    # Example: /metrics/range?from=2026-03-01T00:00:00Z&to=2026-03-02T00:00:00Z
+    # Examples:
+    # - /metrics/range?from=2026-03-01&to=2026-03-02
+    # - /metrics/range?from=2026-03-01T00:00:00Z&to=2026-03-02T00:00:00Z
     # Returns hourly aggregates per query (not raw per-minute points).
     from_ts = request.args.get("from")
     to_ts = request.args.get("to")

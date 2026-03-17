@@ -50,7 +50,10 @@ python collect_metrics.py --host 0.0.0.0 --port 8080 --initial-run
   - `query` (optional exact query filter)
 
 ### Time range metrics (hourly aggregates)
-- `GET /metrics/range?from=<iso>&to=<iso>`
+- `GET /metrics/range?from=<date-or-iso>&to=<date-or-iso>`
+- `from`/`to` can be either:
+  - `YYYY-MM-DD` (day boundaries at 00:00:00 UTC)
+  - full ISO timestamp (e.g. `2026-03-10T00:00:00Z`)
 - Returns hourly aggregates per query (not raw minute-level rows):
   - `min_result`, `avg_result`, `max_result`, `sample_count`
 - Optional query params:
@@ -62,7 +65,7 @@ python collect_metrics.py --host 0.0.0.0 --port 8080 --initial-run
 Example:
 
 ```bash
-curl "http://localhost:8080/metrics/range?from=2026-03-17T00:00:00Z&to=2026-03-18T00:00:00Z"
+curl "http://localhost:8080/metrics/range?from=2026-03-17&to=2026-03-18"
 ```
 
 ### Daily max per query
