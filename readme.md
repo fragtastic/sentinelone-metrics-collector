@@ -21,6 +21,8 @@ Optional env vars:
 - `COLLECT_INTERVAL_SECONDS` (default: `60`)
 - `MAX_QUERY_WORKERS` (default: `8`)
 - `PROCESS_NICE_ADJUST` (default: `10`; higher values lower CPU scheduling priority on Linux)
+- `API_MAX_RANGE_DAYS` (default: `31`; hard cap for `/metrics/range`, `/metrics/daily-max`, `/metrics/hourly-max`)
+- `API_MAX_RESULT_ROWS` (default: `10000`; hard row cap for `/metrics/range` and `limit` max)
 
 Install dependencies:
 
@@ -51,6 +53,9 @@ python collect_metrics.py --host 0.0.0.0 --port 8080 --initial-run
 - `GET /metrics/range?from=<iso>&to=<iso>`
 - Optional query params:
   - `query` (exact query filter)
+  - `limit` (max `API_MAX_RESULT_ROWS`, default same)
+- Guardrails:
+  - rejects ranges larger than `API_MAX_RANGE_DAYS`
 
 Example:
 
@@ -61,12 +66,12 @@ curl "http://localhost:8080/metrics/range?from=2026-03-17T00:00:00Z&to=2026-03-1
 ### Daily max per query
 - `GET /metrics/daily-max`
 - Query params:
-  - `days` (default 30, max 3650)
+  - `days` (default 30, max `API_MAX_RANGE_DAYS`)
 
 ### Hourly max per query (last X days)
 - `GET /metrics/hourly-max`
 - Query params:
-  - `days` (default 7, max 3650)
+  - `days` (default 7, max `API_MAX_RANGE_DAYS`)
   - `query` (optional exact query filter)
 
 ## Docker deployment

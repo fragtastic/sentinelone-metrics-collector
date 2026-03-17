@@ -19,6 +19,8 @@ QUERIES_PATH = os.getenv("QUERIES_PATH", "queries.json")
 DEFAULT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "8"))
 DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "10"))
+MAX_RANGE_DAYS = int(os.getenv("API_MAX_RANGE_DAYS", "31"))
+MAX_RESULT_ROWS = int(os.getenv("API_MAX_RESULT_ROWS", "10000"))
 
 
 class MetricsCollector:
@@ -153,6 +155,12 @@ def get_read_connection() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(DB_PATH)
 
 
+def _parse_iso_ts(value: str) -> datetime:
+    # Supports RFC3339 Z suffix.
+    normalized = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
 @app.get("/healthz")
 def healthz() -> Any:
     return jsonify({"ok": True})
@@ -203,9 +211,25 @@ def metrics_range() -> Any:
     from_ts = request.args.get("from")
     to_ts = request.args.get("to")
     query_filter = request.args.get("query")
+    limit = max(1, min(int(request.args.get("limit", str(MAX_RESULT_ROWS))), MAX_RESULT_ROWS))
 
     if not from_ts or not to_ts:
         return jsonify({"error": "from and to query params are required"}), 400
+
+    try:
+        start = _parse_iso_ts(from_ts)
+        end = _parse_iso_ts(to_ts)
+    except ValueError:
+        return jsonify({"error": "from/to must be valid ISO timestamps"}), 400
+
+    if end <= start:
+        return jsonify({"error": "to must be greater than from"}), 400
+
+    span_days = (end - start).total_seconds() / 86400
+    if span_days > MAX_RANGE_DAYS:
+        return jsonify(
+            {"error": f"requested range too large; max is {MAX_RANGE_DAYS} days"}
+        ), 400
 
     con = get_read_connection()
     try:
@@ -218,8 +242,9 @@ def metrics_range() -> Any:
                   AND Timestamp < ?::TIMESTAMPTZ
                   AND Query = ?
                 ORDER BY Timestamp ASC
+                LIMIT ?
                 """,
-                (from_ts, to_ts, query_filter),
+                (from_ts, to_ts, query_filter, limit),
             ).fetchall()
         else:
             rows = con.execute(
@@ -229,8 +254,9 @@ def metrics_range() -> Any:
                 WHERE Timestamp >= ?::TIMESTAMPTZ
                   AND Timestamp < ?::TIMESTAMPTZ
                 ORDER BY Timestamp ASC
+                LIMIT ?
                 """,
-                (from_ts, to_ts),
+                (from_ts, to_ts, limit),
             ).fetchall()
     finally:
         con.close()
@@ -245,7 +271,7 @@ def metrics_range() -> Any:
 
 @app.get("/metrics/daily-max")
 def daily_max() -> Any:
-    days = max(1, min(int(request.args.get("days", "30")), 3650))
+    days = max(1, min(int(request.args.get("days", "30")), MAX_RANGE_DAYS))
 
     con = get_read_connection()
     try:
@@ -273,7 +299,7 @@ def daily_max() -> Any:
 
 @app.get("/metrics/hourly-max")
 def hourly_max() -> Any:
-    days = max(1, min(int(request.args.get("days", "7")), 3650))
+    days = max(1, min(int(request.args.get("days", "7")), MAX_RANGE_DAYS))
     query_filter = request.args.get("query")
 
     con = get_read_connection()
