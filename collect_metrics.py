@@ -18,6 +18,7 @@ DB_PATH = os.getenv("METRICS_DB_PATH", "metrics.duckdb")
 QUERIES_PATH = os.getenv("QUERIES_PATH", "queries.json")
 DEFAULT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "8"))
+DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "0"))
 
 
 class MetricsCollector:
@@ -322,12 +323,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--interval-seconds", type=int, default=DEFAULT_INTERVAL_SECONDS)
     parser.add_argument("--initial-run", action="store_true")
     parser.add_argument("--max-query-workers", type=int, default=MAX_QUERY_WORKERS)
+    parser.add_argument(
+        "--nice-adjust",
+        type=int,
+        default=DEFAULT_NICE_ADJUST,
+        help="Increase process niceness on startup (Linux). Higher = lower CPU priority.",
+    )
     return parser.parse_args()
+
+
+def apply_process_nice(nice_adjust: int) -> None:
+    if nice_adjust <= 0:
+        return
+    try:
+        current = os.nice(0)
+        new_value = os.nice(nice_adjust)
+        print(f"Adjusted process niceness: {current} -> {new_value}")
+    except OSError as e:
+        print(f"Unable to adjust process niceness by {nice_adjust}: {e}")
 
 
 def main() -> None:
     global collector
     args = parse_args()
+
+    apply_process_nice(args.nice_adjust)
 
     collector = MetricsCollector(
         db_path=DB_PATH,

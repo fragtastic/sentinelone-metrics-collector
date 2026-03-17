@@ -20,6 +20,7 @@ Optional env vars:
 - `QUERIES_PATH` (default: `queries.json`)
 - `COLLECT_INTERVAL_SECONDS` (default: `60`)
 - `MAX_QUERY_WORKERS` (default: `8`)
+- `PROCESS_NICE_ADJUST` (default: `0`; e.g. `10` lowers CPU scheduling priority on Linux)
 
 Install dependencies:
 
@@ -106,6 +107,21 @@ docker inspect --format='{{json .State.Health}}' s1-metrics-collector
 
 - Collector loop runs in its own thread.
 - API uses Flask threaded mode (`threaded=True`) so requests are handled concurrently.
+- Request threads are per-request and exit after response (no persistent endpoint threads to TTL-kill).
 - Collector uses a dedicated DuckDB writer connection.
-- API handlers open a separate read-only DuckDB connection per request.
+- API handlers open a separate DuckDB connection per request using the same DB config.
 - Query fetching from SentinelOne is parallelized with a thread pool each collection cycle.
+
+## Low-power tuning
+
+- Lower CPU priority at startup:
+
+```bash
+python collect_metrics.py --nice-adjust 10
+```
+
+or via env:
+
+```bash
+PROCESS_NICE_ADJUST=10 python collect_metrics.py
+```
