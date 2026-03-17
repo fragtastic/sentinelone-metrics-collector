@@ -18,7 +18,7 @@ DB_PATH = os.getenv("METRICS_DB_PATH", "metrics.duckdb")
 QUERIES_PATH = os.getenv("QUERIES_PATH", "queries.json")
 DEFAULT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "8"))
-DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "0"))
+DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "10"))
 
 
 class MetricsCollector:

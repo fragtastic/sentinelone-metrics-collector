@@ -20,7 +20,7 @@ Optional env vars:
 - `QUERIES_PATH` (default: `queries.json`)
 - `COLLECT_INTERVAL_SECONDS` (default: `60`)
 - `MAX_QUERY_WORKERS` (default: `8`)
-- `PROCESS_NICE_ADJUST` (default: `0`; e.g. `10` lowers CPU scheduling priority on Linux)
+- `PROCESS_NICE_ADJUST` (default: `10`; higher values lower CPU scheduling priority on Linux)
 
 Install dependencies:
 
