@@ -145,8 +145,11 @@ collector: Optional[MetricsCollector] = None
 
 
 def get_read_connection() -> duckdb.DuckDBPyConnection:
-    # Dedicated read connection per request thread.
-    return duckdb.connect(DB_PATH, read_only=True)
+    # Dedicated connection per request thread.
+    # IMPORTANT: DuckDB cannot open the same file with mixed configs (e.g. read_only=True
+    # on one connection while another connection is read-write). The collector keeps a
+    # read-write writer connection open, so request connections must use the same config.
+    return duckdb.connect(DB_PATH)
 
 
 @app.get("/healthz")
