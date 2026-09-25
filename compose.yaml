@@ -1,0 +1,18 @@
+# Local testing: cp example.env .env; cp example_queries.json queries.json; set SENTINELONE_*.
+# UI + API: http://localhost:8080/
+
+services:
+  metrics:
+    build: .
+    container_name: s1-metrics-collector
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      METRICS_DB_PATH: /app/data/metrics.duckdb
+      QUERIES_PATH: /app/config/queries.json
+    volumes:
+      - ./data:/app/data
+      - ./queries.json:/app/config/queries.json:ro
+    restart: unless-stopped

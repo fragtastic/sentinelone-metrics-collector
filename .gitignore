@@ -8,4 +8,5 @@ venv/
 *.xlsx
 *.csv
 queries.json
+data/
 __pycache__/

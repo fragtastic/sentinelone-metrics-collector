@@ -23,11 +23,17 @@ Optional env vars:
 - `METRICS_DB_PATH` (default: `metrics.duckdb`)
 - `QUERIES_PATH` (default: `queries.json`)
 - `COLLECT_INTERVAL_SECONDS` (default: `60`)
-- `MAX_QUERY_WORKERS` (default: `8`)
+- `MAX_QUERY_WORKERS` (default: `2`; parallel S1 count requests per collect cycle)
+- `S1_QUERY_STAGGER_SECONDS` (default: `0.5`; delay between **starting** each upstream request)
+- `S1_HTTP_CONNECT_TIMEOUT_SECONDS` / `S1_HTTP_READ_TIMEOUT_SECONDS` (defaults: `5` / `45`)
+- `S1_QUERY_RETRIES` / `S1_QUERY_RETRY_DELAY_SECONDS` (defaults: `1` / `2`; retries on timeout, connection errors, 429/5xx)
 - `PROCESS_NICE_ADJUST` (default: `10`; higher values lower CPU scheduling priority on Linux)
 - `API_MAX_RANGE_DAYS` (default: `31`; hard cap for `/metrics/range`, `/metrics/daily-max`, `/metrics/hourly-max`)
 - `API_MAX_RESULT_ROWS` (default: `10000`; hard row cap for `/metrics/range` and `limit` max)
-- `API_TOKEN` (optional; when set, metrics routes require `Authorization: Bearer <token>`. `/healthz` stays unauthenticated for Docker health checks.)
+- `API_TOKEN` (optional; static shared secret for Excel/scripts; metrics routes accept `Authorization: Bearer <token>`. `/healthz` stays unauthenticated.)
+- `OIDC_ISSUER` (optional; e.g. `https://your-org.okta.com/oauth2/default` — enables JWT access-token verification on `/metrics/*`)
+- `OIDC_AUDIENCE` (optional; comma-separated allowed `aud` values; recommended when using OIDC)
+- `CORS_ALLOWED_ORIGINS` (optional; comma-separated browser origins for a split-origin UI, e.g. `https://metrics-ui.example.com`)
 - `STORE_FAILED_AS` (default: `null`; `null` = insert row with `Result` NULL on SentinelOne failure, `omit` = skip row so Excel/API show a gap)
 
 Install dependencies:
@@ -51,11 +57,33 @@ Run service:
 python collect_metrics.py --host 0.0.0.0 --port 8080 --initial-run
 ```
 
-The process uses Flask’s built-in server (`threaded=True`), which is sufficient for a single low-traffic EC2 instance. Use one process per DuckDB file.
+The Docker image runs **gunicorn** (one worker, threaded). For bare-metal dev you can still use `python collect_metrics.py` (Flask dev server). Use one process per DuckDB file.
+
+## Web UI
+
+The repository includes a React SPA under `frontend/` (charts in the browser, no server-side rendering).
+
+**Local development**
+
+```bash
+cd frontend && npm ci && cp .env.example .env.local
+# Start collector on :8080, then:
+npm run dev
+```
+
+See [frontend/README.md](frontend/README.md) for proxy and `VITE_DEV_API_TOKEN` when the collector uses `API_TOKEN`.
+
+**Production (Docker)**
+
+The Docker image can serve the UI from `/app/static` (same origin as the API). You may also deploy the built `frontend/dist` to a separate host; set `VITE_API_BASE_URL` and configure **`CORS_ALLOWED_ORIGINS`** on the collector.
+
+When **`API_TOKEN`** and/or **`OIDC_ISSUER`** is set, `/metrics/*` requires `Authorization: Bearer`. Static routes stay open (Option A) when UI is co-located; a split-origin UI relies on OIDC tokens instead of exposing `API_TOKEN` in the browser.
+
+**SSO (deferred, Phase 7b):** browser OIDC login (Okta or any OIDC issuer) → access token presented to the API → JWT verified server-side. See `IMPLEMENTATION_PLAN.md` and `frontend/README.md`.
 
 ## API authentication
 
-When `API_TOKEN` is set, send the same header browsers use for bearer tokens:
+When `API_TOKEN` and/or OIDC verification is enabled, send a bearer token on `/metrics/*`:
 
 ```http
 Authorization: Bearer YOUR_API_TOKEN
@@ -86,6 +114,11 @@ If `API_TOKEN` is unset, metrics routes are open (rely on network isolation, e.g
 - `GET /healthz`
 - Returns JSON with `ok`, `db_ok`, `collector_thread_alive`, `last_collect_at`, `last_success_at`, `last_error`
 - HTTP `503` when the DB is unreachable or the collector thread is not running (Docker health check uses this)
+
+### Configured queries (deployment list)
+
+- `GET /metrics/queries`
+- Returns the JSON array from the mounted `queries.json` (same strings used for collection). The web UI filters charts and tables to this list so retired queries do not appear.
 
 ### Latest metrics
 
@@ -127,8 +160,35 @@ curl -H "Authorization: Bearer YOUR_API_TOKEN" \
 
 - `GET /metrics/hourly-max`
 - Query params:
-  - `days` (default 7, max `API_MAX_RANGE_DAYS`)
+  - `hours` (optional; max `API_MAX_RANGE_DAYS * 24`) — last N hours, hourly buckets
+  - `days` (default 7 when `hours` omitted, max `API_MAX_RANGE_DAYS`)
   - `query` (optional exact query filter)
+
+### Raw collection samples (recent window)
+
+- `GET /metrics/raw`
+- Query params:
+  - `hours` (default 24, max `API_MAX_RANGE_DAYS * 24`)
+  - `query` (optional exact query filter)
+  - `limit` (default `API_MAX_RESULT_ROWS`, max same)
+- Returns individual samples (`timestamp`, `query`, `result`) in the window, ordered oldest first — same shape as `/metrics/latest`, filtered by time
+
+## Local testing with Docker Compose
+
+From the repo root:
+
+```bash
+cp example.env .env
+# Edit .env: SENTINELONE_URL, SENTINELONE_AUTH_TOKEN (optional API_TOKEN for /metrics/*)
+docker compose up --build
+```
+
+- **UI + API:** http://localhost:8080/
+- **Health:** http://localhost:8080/healthz
+- **Data:** DuckDB persisted in `./data/` (gitignored)
+- **Queries:** `example_queries.json` is mounted read-only; for production-like config, copy to `queries.json`, change the compose volume to `./queries.json:/app/config/queries.json:ro`, and restart.
+
+Stop with `docker compose down`. Rebuild after code changes: `docker compose up --build`.
 
 ## Docker deployment (EC2)
 
@@ -171,7 +231,7 @@ The container includes a Docker `HEALTHCHECK` that calls `GET http://127.0.0.1:8
 - Collector loop runs in its own thread.
 - API uses Flask threaded mode so requests are handled concurrently.
 - Collector uses a dedicated DuckDB writer connection; API opens a separate connection per request.
-- Query fetching from SentinelOne is parallelized with a thread pool each collection cycle.
+- Query fetching from SentinelOne uses a small thread pool with staggered starts (see `MAX_QUERY_WORKERS`, `S1_QUERY_STAGGER_SECONDS`). Failures surface on `/healthz` `last_error` with per-query hints (timeouts, auth, rate limits).
 - DuckDB indexes on `Timestamp` and `(Query, Timestamp)` support range and aggregate queries.
 - Run a single collector instance per DuckDB file.
 
@@ -180,7 +240,7 @@ The container includes a Docker `HEALTHCHECK` that calls `GET http://127.0.0.1:8
 See `IMPLEMENTATION_PLAN.md` for tracking. Notable deferred items:
 
 - **Data retention / compaction:** env-driven roll-up and purge (all raw history kept today). SentinelOne usage is **max count per day**; their metering uses a **5-minute** cadence—future compaction should retain daily (and optionally 5-min/hourly) **max** per query, not necessarily every minute sample forever. See `IMPLEMENTATION_PLAN.md`.
-- **SSO web UI** with client-side charts (separate frontend).
+- **SSO gate** for the web UI (Phase 7b in `IMPLEMENTATION_PLAN.md`; UI MVP in `frontend/`).
 - **Production WSGI** (e.g. gunicorn) if traffic or hardening requirements grow.
 
 ## Low-power tuning

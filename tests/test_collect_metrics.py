@@ -18,10 +18,14 @@ def metrics_module(tmp_path, monkeypatch):
     monkeypatch.setenv("SENTINELONE_URL", "example")
     monkeypatch.setenv("SENTINELONE_AUTH_TOKEN", "token")
     monkeypatch.delenv("API_TOKEN", raising=False)
+    monkeypatch.delenv("OIDC_ISSUER", raising=False)
+    monkeypatch.delenv("OIDC_AUDIENCE", raising=False)
+    monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
     monkeypatch.setenv("STORE_FAILED_AS", "null")
 
-    if "collect_metrics" in sys.modules:
-        del sys.modules["collect_metrics"]
+    for name in ("collect_metrics", "metrics_auth"):
+        if name in sys.modules:
+            del sys.modules[name]
     cm = importlib.import_module("collect_metrics")
     yield cm
     if cm.collector is not None:
@@ -53,7 +57,9 @@ def test_parse_int_query_param_invalid(metrics_module):
 
 
 def test_api_token_required(metrics_module, monkeypatch):
-    monkeypatch.setattr(metrics_module, "API_TOKEN", "secret-token")
+    import metrics_auth
+
+    monkeypatch.setattr(metrics_auth, "API_TOKEN", "secret-token")
     client = metrics_module.app.test_client()
     # /healthz does not require a token (may be 503 when collector is not running).
     assert client.get("/healthz").status_code in (200, 503)
@@ -65,6 +71,54 @@ def test_api_token_required(metrics_module, monkeypatch):
         ).status_code
         == 200
     )
+
+
+def test_oidc_bearer_on_metrics(metrics_module, monkeypatch):
+    import metrics_auth
+
+    monkeypatch.setattr(metrics_auth, "API_TOKEN", None)
+    monkeypatch.setattr(metrics_auth, "OIDC_ISSUER", "https://issuer.example.com")
+    monkeypatch.setattr(
+        metrics_auth, "verify_oidc_access_token", lambda token: token == "valid-jwt"
+    )
+    client = metrics_module.app.test_client()
+    assert client.get("/metrics/latest").status_code == 401
+    assert (
+        client.get(
+            "/metrics/latest",
+            headers={"Authorization": "Bearer valid-jwt"},
+        ).status_code
+        == 200
+    )
+
+
+def test_cors_allows_configured_origin(monkeypatch):
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://ui.example.com")
+    monkeypatch.setenv("METRICS_DB_PATH", ":memory:")
+    for name in ("collect_metrics", "metrics_auth"):
+        if name in sys.modules:
+            del sys.modules[name]
+    cm = importlib.import_module("collect_metrics")
+    client = cm.app.test_client()
+    resp = client.open(
+        "/metrics/latest",
+        method="OPTIONS",
+        headers={
+            "Origin": "https://ui.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 204
+    assert resp.headers.get("Access-Control-Allow-Origin") == "https://ui.example.com"
+
+
+def test_api_token_not_required_for_static_when_ui_missing(metrics_module, monkeypatch):
+    import metrics_auth
+
+    monkeypatch.setattr(metrics_auth, "API_TOKEN", "secret-token")
+    client = metrics_module.app.test_client()
+    assert client.get("/").status_code == 404
+    assert client.get("/explore").status_code == 404
 
 
 def test_healthz_without_collector(metrics_module, monkeypatch):
@@ -105,7 +159,7 @@ def test_store_failed_as_omit(metrics_module):
     )
     collector._queries = ["q1", "q2"]
 
-    with patch.object(collector, "get_count_query", side_effect=[100, None]):
+    with patch.object(collector, "get_count_query", side_effect=[(100, None), (None, "q2: timeout")]):
         collector.collect_once()
 
     con = duckdb.connect(cm.DB_PATH)
@@ -130,7 +184,7 @@ def test_store_failed_as_null(metrics_module):
     )
     collector._queries = ["q1"]
 
-    with patch.object(collector, "get_count_query", return_value=None):
+    with patch.object(collector, "get_count_query", return_value=(None, "q1: HTTP 503")):
         collector.collect_once()
 
     con = duckdb.connect(cm.DB_PATH)
@@ -146,3 +200,40 @@ def test_metrics_range_validation(metrics_module):
     client = metrics_module.app.test_client()
     resp = client.get("/metrics/range?from=2026-01-02&to=2026-01-01")
     assert resp.status_code == 400
+
+
+def test_metrics_queries_lists_config(metrics_module):
+    client = metrics_module.app.test_client()
+    resp = client.get("/metrics/queries")
+    assert resp.status_code == 200
+    assert resp.get_json() == ["q1"]
+
+
+def test_hourly_max_hours_and_raw(metrics_module):
+    cm = metrics_module
+    con = duckdb.connect(cm.DB_PATH)
+    try:
+        cm.ensure_schema(con)
+        con.execute(
+            """
+            INSERT INTO s1_metrics (Timestamp, Query, Result) VALUES
+                (now(), 'q1', 10),
+                (now(), 'q1', 50),
+                (now(), 'q2', 20)
+            """
+        )
+    finally:
+        con.close()
+
+    client = cm.app.test_client()
+    hourly = client.get("/metrics/hourly-max?hours=24")
+    assert hourly.status_code == 200
+    hourly_rows = hourly.get_json()
+    assert any(r["query"] == "q1" and r["max_result"] == 50 for r in hourly_rows)
+
+    raw = client.get("/metrics/raw?hours=24")
+    assert raw.status_code == 200
+    raw_rows = raw.get_json()
+    q1_values = sorted(r["result"] for r in raw_rows if r["query"] == "q1")
+    assert q1_values == [10, 50]
+    assert [r["result"] for r in raw_rows if r["query"] == "q2"] == [20]

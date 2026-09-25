@@ -1,8 +1,8 @@
 import argparse
-import hmac
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
@@ -10,18 +10,27 @@ from typing import Any, List, Optional, Tuple
 import duckdb
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
+
+from metrics_auth import bearer_authorized, metrics_auth_enabled
+from s1_upstream import fetch_agent_count, summarize_query_failures
 
 load_dotenv()
 
 DB_PATH = os.getenv("METRICS_DB_PATH", "metrics.duckdb")
 QUERIES_PATH = os.getenv("QUERIES_PATH", "queries.json")
 DEFAULT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
-MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "8"))
+MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "2"))
+S1_QUERY_STAGGER_SECONDS = float(os.getenv("S1_QUERY_STAGGER_SECONDS", "0.5"))
 DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "10"))
 MAX_RANGE_DAYS = int(os.getenv("API_MAX_RANGE_DAYS", "31"))
+MAX_RANGE_HOURS = MAX_RANGE_DAYS * 24
 MAX_RESULT_ROWS = int(os.getenv("API_MAX_RESULT_ROWS", "10000"))
-API_TOKEN = os.getenv("API_TOKEN", "").strip() or None
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_cors_origins_raw = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
+CORS_ALLOWED_ORIGINS = [
+    origin.strip() for origin in _cors_origins_raw.split(",") if origin.strip()
+]
 
 # TODO: Retention/compaction (see IMPLEMENTATION_PLAN.md): S1 usage = daily max per query;
 # roll up raw samples to daily (and optionally 5-min/hourly) max before purge.
@@ -36,6 +45,14 @@ def _normalize_store_failed_as(raw: str) -> str:
 
 
 STORE_FAILED_AS = _normalize_store_failed_as(os.getenv("STORE_FAILED_AS", "null"))
+
+
+def load_queries_from_path(queries_path: str) -> List[str]:
+    with open(queries_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("queries.json must contain a JSON array of query strings")
+        return [str(x) for x in data]
 
 
 def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
@@ -129,11 +146,7 @@ class MetricsCollector:
                 self.last_error = last_error
 
     def load_queries(self) -> List[str]:
-        with open(self.queries_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                raise ValueError("queries.json must contain a JSON array of query strings")
-            return [str(x) for x in data]
+        return load_queries_from_path(self.queries_path)
 
     def _run_loop(self, initial_run: bool = False) -> None:
         if initial_run:
@@ -172,21 +185,27 @@ class MetricsCollector:
             return
 
         rows: List[tuple[str, str, Optional[int]]] = []
-        had_failure = False
-        with ThreadPoolExecutor(max_workers=min(len(self._queries), self.max_workers)) as executor:
-            futures = {executor.submit(self.get_count_query, q): q for q in self._queries}
+        failure_details: List[str] = []
+        worker_count = min(len(self._queries), self.max_workers)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {}
+            for index, query in enumerate(self._queries):
+                if index > 0 and S1_QUERY_STAGGER_SECONDS > 0:
+                    time.sleep(S1_QUERY_STAGGER_SECONDS)
+                futures[executor.submit(self.get_count_query, query)] = query
             for future in as_completed(futures):
                 query = futures[future]
                 result: Optional[int]
+                detail: Optional[str]
                 try:
-                    result = future.result()
+                    result, detail = future.result()
                 except Exception as e:
                     print(f"Query failed for '{query}': {e}")
-                    result = None
-                if result is None:
-                    had_failure = True
-                    if self.store_failed_as == "omit":
-                        continue
+                    result, detail = None, f"{query}: {e}"
+                if detail:
+                    failure_details.append(detail)
+                if result is None and self.store_failed_as == "omit":
+                    continue
                 rows.append((collect_iso, query, result))
 
         if rows:
@@ -196,31 +215,17 @@ class MetricsCollector:
             )
             print(f"Stored {len(rows)} rows")
 
-        if had_failure:
-            self._set_status(last_error="one or more SentinelOne count queries failed")
+        if failure_details:
+            self._set_status(last_error=summarize_query_failures(failure_details))
         else:
             self._set_status(last_success_at=collect_iso, clear_error=True)
 
-    def get_count_query(self, params: str) -> Optional[int]:
+    def get_count_query(self, params: str) -> Tuple[Optional[int], Optional[str]]:
         base = os.getenv("SENTINELONE_URL")
         token = os.getenv("SENTINELONE_AUTH_TOKEN")
         if not base or not token:
             raise RuntimeError("SENTINELONE_URL and SENTINELONE_AUTH_TOKEN must be set")
-
-        url = f"https://{base}.sentinelone.net/web/api/v2.1/agents/count?{params}"
-        headers = {
-            "Accept": "application/json",
-            "Authorization": "ApiToken " + token,
-        }
-        try:
-            response = requests.get(url, headers=headers, timeout=(3, 10))
-            response.raise_for_status()
-            return response.json()["data"]["total"]
-        except requests.exceptions.RequestException as e:
-            print(f"HTTP error for {url}: {e}")
-        except (KeyError, ValueError) as e:
-            print(f"Invalid JSON from {url}: {e}")
-        return None
+        return fetch_agent_count(base, token, params)
 
 
 app = Flask(__name__)
@@ -237,22 +242,45 @@ def _parse_bearer_token(authorization_header: Optional[str]) -> Optional[str]:
     return token or None
 
 
-def _bearer_token_valid(provided: Optional[str]) -> bool:
-    if API_TOKEN is None or provided is None:
-        return False
-    if len(provided) != len(API_TOKEN):
-        return False
-    return hmac.compare_digest(provided, API_TOKEN)
+def _cors_origin_allowed() -> bool:
+    origin = request.headers.get("Origin")
+    return bool(origin and origin in CORS_ALLOWED_ORIGINS)
+
+
+@app.before_request
+def handle_cors_preflight() -> Optional[Response]:
+    if request.method != "OPTIONS" or not CORS_ALLOWED_ORIGINS:
+        return None
+    if not _cors_origin_allowed():
+        return None
+    response = Response("", status=204)
+    response.headers["Access-Control-Allow-Origin"] = request.headers["Origin"]
+    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    return response
+
+
+@app.after_request
+def add_cors_headers(response: Response) -> Response:
+    if CORS_ALLOWED_ORIGINS and _cors_origin_allowed():
+        response.headers["Access-Control-Allow-Origin"] = request.headers["Origin"]
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    return response
 
 
 @app.before_request
 def require_api_token() -> Optional[Response]:
-    if API_TOKEN is None:
+    if request.method == "OPTIONS":
+        return None
+    if not metrics_auth_enabled():
         return None
     if request.path == "/healthz":
         return None
+    if not request.path.startswith("/metrics"):
+        return None
     provided = _parse_bearer_token(request.headers.get("Authorization"))
-    if not _bearer_token_valid(provided):
+    if not bearer_authorized(provided):
         return jsonify({"error": "unauthorized"}), 401
     return None
 
@@ -317,6 +345,16 @@ def healthz() -> Any:
     }
     status = 200 if payload["ok"] else 503
     return jsonify(payload), status
+
+
+@app.get("/metrics/queries")
+def metrics_queries() -> Any:
+    try:
+        return jsonify(load_queries_from_path(QUERIES_PATH))
+    except FileNotFoundError:
+        return jsonify({"error": "queries file not found"}), 404
+    except (ValueError, json.JSONDecodeError) as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.get("/metrics/latest")
@@ -485,8 +523,78 @@ def daily_max() -> Any:
 
 @app.get("/metrics/hourly-max")
 def hourly_max() -> Any:
-    days, err = parse_int_query_param(
-        "days", request.args.get("days"), default=7, minimum=1, maximum=MAX_RANGE_DAYS
+    hours_raw = request.args.get("hours")
+    if hours_raw is not None and hours_raw != "":
+        window_amount, err = parse_int_query_param(
+            "hours", hours_raw, default=24, minimum=1, maximum=MAX_RANGE_HOURS
+        )
+        if err:
+            body, status = err
+            return jsonify(body), status
+        window_predicate = "Timestamp >= now() - (? * INTERVAL '1 hour')"
+    else:
+        window_amount, err = parse_int_query_param(
+            "days", request.args.get("days"), default=7, minimum=1, maximum=MAX_RANGE_DAYS
+        )
+        if err:
+            body, status = err
+            return jsonify(body), status
+        window_predicate = "Timestamp >= now() - (? * INTERVAL '1 day')"
+
+    query_filter = request.args.get("query")
+
+    con = get_read_connection()
+    try:
+        if query_filter:
+            rows = con.execute(
+                f"""
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MAX(Result) AS max_result
+                FROM s1_metrics
+                WHERE {window_predicate}
+                  AND Query = ?
+                GROUP BY hour, Query
+                ORDER BY hour ASC, Query
+                """,
+                (window_amount, query_filter),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                f"""
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MAX(Result) AS max_result
+                FROM s1_metrics
+                WHERE {window_predicate}
+                GROUP BY hour, Query
+                ORDER BY hour ASC, Query
+                """,
+                (window_amount,),
+            ).fetchall()
+    finally:
+        con.close()
+
+    return jsonify([{"hour": str(r[0]), "query": r[1], "max_result": r[2]} for r in rows])
+
+
+@app.get("/metrics/raw")
+def metrics_raw() -> Any:
+    hours, err = parse_int_query_param(
+        "hours", request.args.get("hours"), default=24, minimum=1, maximum=MAX_RANGE_HOURS
+    )
+    if err:
+        body, status = err
+        return jsonify(body), status
+
+    limit, err = parse_int_query_param(
+        "limit",
+        request.args.get("limit"),
+        default=MAX_RESULT_ROWS,
+        minimum=1,
+        maximum=MAX_RESULT_ROWS,
     )
     if err:
         body, status = err
@@ -499,36 +607,56 @@ def hourly_max() -> Any:
         if query_filter:
             rows = con.execute(
                 """
-                SELECT
-                    date_trunc('hour', Timestamp) AS hour,
-                    Query,
-                    MAX(Result) AS max_result
+                SELECT Timestamp, Query, Result
                 FROM s1_metrics
-                WHERE Timestamp >= now() - (? * INTERVAL '1 day')
+                WHERE Timestamp >= now() - (? * INTERVAL '1 hour')
                   AND Query = ?
-                GROUP BY hour, Query
-                ORDER BY hour DESC, Query
+                ORDER BY Timestamp ASC, Query
+                LIMIT ?
                 """,
-                (days, query_filter),
+                (hours, query_filter, limit),
             ).fetchall()
         else:
             rows = con.execute(
                 """
-                SELECT
-                    date_trunc('hour', Timestamp) AS hour,
-                    Query,
-                    MAX(Result) AS max_result
+                SELECT Timestamp, Query, Result
                 FROM s1_metrics
-                WHERE Timestamp >= now() - (? * INTERVAL '1 day')
-                GROUP BY hour, Query
-                ORDER BY hour DESC, Query
+                WHERE Timestamp >= now() - (? * INTERVAL '1 hour')
+                ORDER BY Timestamp ASC, Query
+                LIMIT ?
                 """,
-                (days,),
+                (hours, limit),
             ).fetchall()
     finally:
         con.close()
 
-    return jsonify([{"hour": str(r[0]), "query": r[1], "max_result": r[2]} for r in rows])
+    return jsonify(
+        [{"timestamp": str(r[0]), "query": r[1], "result": r[2]} for r in rows]
+    )
+
+
+def _static_dir_ready() -> bool:
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    return os.path.isfile(index_path)
+
+
+@app.get("/")
+def spa_index() -> Any:
+    if not _static_dir_ready():
+        return jsonify({"error": "web ui not installed"}), 404
+    return send_from_directory(STATIC_DIR, "index.html")
+
+
+@app.get("/<path:asset_path>")
+def spa_assets(asset_path: str) -> Any:
+    if asset_path.startswith("metrics"):
+        return jsonify({"error": "not found"}), 404
+    if not _static_dir_ready():
+        return jsonify({"error": "web ui not installed"}), 404
+    file_path = os.path.join(STATIC_DIR, asset_path)
+    if os.path.isfile(file_path):
+        return send_from_directory(STATIC_DIR, asset_path)
+    return send_from_directory(STATIC_DIR, "index.html")
 
 
 def parse_args() -> argparse.Namespace:
@@ -558,24 +686,45 @@ def apply_process_nice(nice_adjust: int) -> None:
         print(f"Unable to adjust process niceness by {nice_adjust}: {e}")
 
 
-def main() -> None:
+def start_collector(
+    *,
+    initial_run: bool = False,
+    interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
+    max_workers: int = MAX_QUERY_WORKERS,
+    nice_adjust: int = DEFAULT_NICE_ADJUST,
+) -> None:
     global collector
-    args = parse_args()
-
-    apply_process_nice(args.nice_adjust)
-
+    if collector is not None and collector.collector_thread_alive():
+        return
+    apply_process_nice(nice_adjust)
     collector = MetricsCollector(
         db_path=DB_PATH,
         queries_path=QUERIES_PATH,
+        interval_seconds=interval_seconds,
+        max_workers=max_workers,
+    )
+    collector.start(initial_run=initial_run)
+
+
+def stop_collector() -> None:
+    global collector
+    if collector is not None:
+        collector.stop()
+        collector = None
+
+
+def main() -> None:
+    args = parse_args()
+    start_collector(
+        initial_run=args.initial_run,
         interval_seconds=args.interval_seconds,
         max_workers=args.max_query_workers,
+        nice_adjust=args.nice_adjust,
     )
-    collector.start(initial_run=args.initial_run)
-
     try:
         app.run(host=args.host, port=args.port, threaded=True)
     finally:
-        collector.stop()
+        stop_collector()
 
 
 if __name__ == "__main__":
