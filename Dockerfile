@@ -19,7 +19,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY collect_metrics.py metrics_auth.py gunicorn.conf.py example_queries.json ./
+COPY collect_metrics.py metrics_auth.py s1_upstream.py gunicorn.conf.py example_queries.json ./
 COPY --from=frontend-build /app/frontend/dist ./static
 
 EXPOSE 8080

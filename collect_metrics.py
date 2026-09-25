@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
@@ -12,13 +13,15 @@ from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from metrics_auth import bearer_authorized, metrics_auth_enabled
+from s1_upstream import fetch_agent_count, summarize_query_failures
 
 load_dotenv()
 
 DB_PATH = os.getenv("METRICS_DB_PATH", "metrics.duckdb")
 QUERIES_PATH = os.getenv("QUERIES_PATH", "queries.json")
 DEFAULT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
-MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "8"))
+MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "2"))
+S1_QUERY_STAGGER_SECONDS = float(os.getenv("S1_QUERY_STAGGER_SECONDS", "0.5"))
 DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "10"))
 MAX_RANGE_DAYS = int(os.getenv("API_MAX_RANGE_DAYS", "31"))
 MAX_RANGE_HOURS = MAX_RANGE_DAYS * 24
@@ -178,21 +181,27 @@ class MetricsCollector:
             return
 
         rows: List[tuple[str, str, Optional[int]]] = []
-        had_failure = False
-        with ThreadPoolExecutor(max_workers=min(len(self._queries), self.max_workers)) as executor:
-            futures = {executor.submit(self.get_count_query, q): q for q in self._queries}
+        failure_details: List[str] = []
+        worker_count = min(len(self._queries), self.max_workers)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {}
+            for index, query in enumerate(self._queries):
+                if index > 0 and S1_QUERY_STAGGER_SECONDS > 0:
+                    time.sleep(S1_QUERY_STAGGER_SECONDS)
+                futures[executor.submit(self.get_count_query, query)] = query
             for future in as_completed(futures):
                 query = futures[future]
                 result: Optional[int]
+                detail: Optional[str]
                 try:
-                    result = future.result()
+                    result, detail = future.result()
                 except Exception as e:
                     print(f"Query failed for '{query}': {e}")
-                    result = None
-                if result is None:
-                    had_failure = True
-                    if self.store_failed_as == "omit":
-                        continue
+                    result, detail = None, f"{query}: {e}"
+                if detail:
+                    failure_details.append(detail)
+                if result is None and self.store_failed_as == "omit":
+                    continue
                 rows.append((collect_iso, query, result))
 
         if rows:
@@ -202,31 +211,17 @@ class MetricsCollector:
             )
             print(f"Stored {len(rows)} rows")
 
-        if had_failure:
-            self._set_status(last_error="one or more SentinelOne count queries failed")
+        if failure_details:
+            self._set_status(last_error=summarize_query_failures(failure_details))
         else:
             self._set_status(last_success_at=collect_iso, clear_error=True)
 
-    def get_count_query(self, params: str) -> Optional[int]:
+    def get_count_query(self, params: str) -> Tuple[Optional[int], Optional[str]]:
         base = os.getenv("SENTINELONE_URL")
         token = os.getenv("SENTINELONE_AUTH_TOKEN")
         if not base or not token:
             raise RuntimeError("SENTINELONE_URL and SENTINELONE_AUTH_TOKEN must be set")
-
-        url = f"https://{base}.sentinelone.net/web/api/v2.1/agents/count?{params}"
-        headers = {
-            "Accept": "application/json",
-            "Authorization": "ApiToken " + token,
-        }
-        try:
-            response = requests.get(url, headers=headers, timeout=(3, 10))
-            response.raise_for_status()
-            return response.json()["data"]["total"]
-        except requests.exceptions.RequestException as e:
-            print(f"HTTP error for {url}: {e}")
-        except (KeyError, ValueError) as e:
-            print(f"Invalid JSON from {url}: {e}")
-        return None
+        return fetch_agent_count(base, token, params)
 
 
 app = Flask(__name__)

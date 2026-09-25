@@ -159,7 +159,7 @@ def test_store_failed_as_omit(metrics_module):
     )
     collector._queries = ["q1", "q2"]
 
-    with patch.object(collector, "get_count_query", side_effect=[100, None]):
+    with patch.object(collector, "get_count_query", side_effect=[(100, None), (None, "q2: timeout")]):
         collector.collect_once()
 
     con = duckdb.connect(cm.DB_PATH)
@@ -184,7 +184,7 @@ def test_store_failed_as_null(metrics_module):
     )
     collector._queries = ["q1"]
 
-    with patch.object(collector, "get_count_query", return_value=None):
+    with patch.object(collector, "get_count_query", return_value=(None, "q1: HTTP 503")):
         collector.collect_once()
 
     con = duckdb.connect(cm.DB_PATH)

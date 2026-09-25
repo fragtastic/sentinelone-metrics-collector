@@ -23,7 +23,10 @@ Optional env vars:
 - `METRICS_DB_PATH` (default: `metrics.duckdb`)
 - `QUERIES_PATH` (default: `queries.json`)
 - `COLLECT_INTERVAL_SECONDS` (default: `60`)
-- `MAX_QUERY_WORKERS` (default: `8`)
+- `MAX_QUERY_WORKERS` (default: `2`; parallel S1 count requests per collect cycle)
+- `S1_QUERY_STAGGER_SECONDS` (default: `0.5`; delay between **starting** each upstream request)
+- `S1_HTTP_CONNECT_TIMEOUT_SECONDS` / `S1_HTTP_READ_TIMEOUT_SECONDS` (defaults: `5` / `45`)
+- `S1_QUERY_RETRIES` / `S1_QUERY_RETRY_DELAY_SECONDS` (defaults: `1` / `2`; retries on timeout, connection errors, 429/5xx)
 - `PROCESS_NICE_ADJUST` (default: `10`; higher values lower CPU scheduling priority on Linux)
 - `API_MAX_RANGE_DAYS` (default: `31`; hard cap for `/metrics/range`, `/metrics/daily-max`, `/metrics/hourly-max`)
 - `API_MAX_RESULT_ROWS` (default: `10000`; hard row cap for `/metrics/range` and `limit` max)
@@ -223,7 +226,7 @@ The container includes a Docker `HEALTHCHECK` that calls `GET http://127.0.0.1:8
 - Collector loop runs in its own thread.
 - API uses Flask threaded mode so requests are handled concurrently.
 - Collector uses a dedicated DuckDB writer connection; API opens a separate connection per request.
-- Query fetching from SentinelOne is parallelized with a thread pool each collection cycle.
+- Query fetching from SentinelOne uses a small thread pool with staggered starts (see `MAX_QUERY_WORKERS`, `S1_QUERY_STAGGER_SECONDS`). Failures surface on `/healthz` `last_error` with per-query hints (timeouts, auth, rate limits).
 - DuckDB indexes on `Timestamp` and `(Query, Timestamp)` support range and aggregate queries.
 - Run a single collector instance per DuckDB file.
 
