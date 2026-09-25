@@ -1,4 +1,4 @@
-# Local testing: cp example.env .env and set SENTINELONE_* (and optional API_TOKEN).
+# Local testing: cp example.env .env; cp example_queries.json queries.json; set SENTINELONE_*.
 # UI + API: http://localhost:8080/
 
 services:
@@ -14,5 +14,5 @@ services:
       QUERIES_PATH: /app/config/queries.json
     volumes:
       - ./data:/app/data
-      - ./example_queries.json:/app/config/queries.json:ro
+      - ./queries.json:/app/config/queries.json:ro
     restart: unless-stopped
