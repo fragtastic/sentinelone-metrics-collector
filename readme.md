@@ -115,6 +115,11 @@ If `API_TOKEN` is unset, metrics routes are open (rely on network isolation, e.g
 - Returns JSON with `ok`, `db_ok`, `collector_thread_alive`, `last_collect_at`, `last_success_at`, `last_error`
 - HTTP `503` when the DB is unreachable or the collector thread is not running (Docker health check uses this)
 
+### Configured queries (deployment list)
+
+- `GET /metrics/queries`
+- Returns the JSON array from the mounted `queries.json` (same strings used for collection). The web UI filters charts and tables to this list so retired queries do not appear.
+
 ### Latest metrics
 
 - `GET /metrics/latest`

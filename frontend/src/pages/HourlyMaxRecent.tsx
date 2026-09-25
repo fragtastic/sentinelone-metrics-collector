@@ -1,23 +1,29 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { fetchHourlyMax } from '../api/client'
+import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
 import { MultiSeriesLineChart } from '../components/MultiSeriesLineChart'
 import { pivotHourlyMax } from '../lib/chartData'
+import { filterRowsByConfiguredQueries } from '../lib/filterConfiguredQueries'
 import { RECENT_HOUR_OPTIONS } from '../lib/recentHoursOptions'
 
 export function HourlyMaxRecent() {
   const [hours, setHours] = useState<number>(24)
+  const configuredQueries = useConfiguredQueries()
 
   const hourlyQuery = useQuery({
     queryKey: ['metrics', 'hourly-max', 'hours', hours],
     queryFn: () => fetchHourlyMax({ hours }),
   })
 
-  const chart = useMemo(
-    () =>
-      hourlyQuery.data ? pivotHourlyMax(hourlyQuery.data) : { queries: [], points: [] },
-    [hourlyQuery.data],
-  )
+  const chart = useMemo(() => {
+    if (!hourlyQuery.data) {
+      return { queries: [], points: [] }
+    }
+    return pivotHourlyMax(
+      filterRowsByConfiguredQueries(hourlyQuery.data, configuredQueries.data),
+    )
+  }, [hourlyQuery.data, configuredQueries.data])
 
   return (
     <div className="space-y-6">

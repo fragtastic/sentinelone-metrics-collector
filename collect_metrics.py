@@ -47,6 +47,14 @@ def _normalize_store_failed_as(raw: str) -> str:
 STORE_FAILED_AS = _normalize_store_failed_as(os.getenv("STORE_FAILED_AS", "null"))
 
 
+def load_queries_from_path(queries_path: str) -> List[str]:
+    with open(queries_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("queries.json must contain a JSON array of query strings")
+        return [str(x) for x in data]
+
+
 def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(
         """
@@ -138,11 +146,7 @@ class MetricsCollector:
                 self.last_error = last_error
 
     def load_queries(self) -> List[str]:
-        with open(self.queries_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                raise ValueError("queries.json must contain a JSON array of query strings")
-            return [str(x) for x in data]
+        return load_queries_from_path(self.queries_path)
 
     def _run_loop(self, initial_run: bool = False) -> None:
         if initial_run:
@@ -341,6 +345,16 @@ def healthz() -> Any:
     }
     status = 200 if payload["ok"] else 503
     return jsonify(payload), status
+
+
+@app.get("/metrics/queries")
+def metrics_queries() -> Any:
+    try:
+        return jsonify(load_queries_from_path(QUERIES_PATH))
+    except FileNotFoundError:
+        return jsonify({"error": "queries file not found"}), 404
+    except (ValueError, json.JSONDecodeError) as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.get("/metrics/latest")

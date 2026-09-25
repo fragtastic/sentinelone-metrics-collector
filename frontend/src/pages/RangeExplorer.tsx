@@ -3,7 +3,9 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
-import { distinctQueries, fetchDailyMax, fetchRange } from '../api/client'
+import { fetchRange } from '../api/client'
+import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
+import { filterRowsByConfiguredQueries } from '../lib/filterConfiguredQueries'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
 import { colorForQuery } from '../lib/queryColors'
 
@@ -31,15 +33,8 @@ export function RangeExplorer() {
   const [showBand, setShowBand] = useState(false)
   const [clientError, setClientError] = useState<string | null>(null)
 
-  const queryListQuery = useQuery({
-    queryKey: ['metrics', 'daily-max', 7, 'queries'],
-    queryFn: () => fetchDailyMax(7),
-  })
-
-  const queries = useMemo(
-    () => (queryListQuery.data ? distinctQueries(queryListQuery.data) : []),
-    [queryListQuery.data],
-  )
+  const configuredQueries = useConfiguredQueries()
+  const queries = configuredQueries.data ?? []
 
   const rangeQuery = useQuery({
     queryKey: ['metrics', 'range', from, to, queryFilter, showBand],
@@ -68,9 +63,13 @@ export function RangeExplorer() {
     if (!rangeQuery.data?.length) {
       return null
     }
+    const configuredRows = filterRowsByConfiguredQueries(
+      rangeQuery.data,
+      configuredQueries.data,
+    )
     const rows = queryFilter
-      ? rangeQuery.data.filter((r) => r.query === queryFilter)
-      : rangeQuery.data
+      ? configuredRows.filter((r) => r.query === queryFilter)
+      : configuredRows
     const times = [...new Set(rows.map((r) => r.hour))].sort()
     const seriesQueries = [...new Set(rows.map((r) => r.query))].sort()
 
@@ -136,7 +135,7 @@ export function RangeExplorer() {
       },
       series,
     }
-  }, [rangeQuery.data, queryFilter, showBand])
+  }, [rangeQuery.data, queryFilter, showBand, configuredQueries.data])
 
   return (
     <div className="space-y-6">

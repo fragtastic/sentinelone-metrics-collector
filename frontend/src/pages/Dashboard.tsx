@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { fetchDailyMax, fetchLatest } from '../api/client'
+import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
 import { latestSnapshotPerQuery, pivotDailyMax } from '../lib/chartData'
+import { filterRowsByConfiguredQueries } from '../lib/filterConfiguredQueries'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
 import { MultiSeriesLineChart } from '../components/MultiSeriesLineChart'
 
@@ -10,6 +12,7 @@ const DAY_OPTIONS = [7, 14, 30] as const
 
 export function Dashboard() {
   const [days, setDays] = useState<number>(30)
+  const configuredQueries = useConfiguredQueries()
 
   const latestQuery = useQuery({
     queryKey: ['metrics', 'latest'],
@@ -21,15 +24,23 @@ export function Dashboard() {
     queryFn: () => fetchDailyMax(days),
   })
 
-  const snapshot = useMemo(
-    () => (latestQuery.data ? latestSnapshotPerQuery(latestQuery.data) : []),
-    [latestQuery.data],
-  )
+  const snapshot = useMemo(() => {
+    if (!latestQuery.data) {
+      return []
+    }
+    const filtered = filterRowsByConfiguredQueries(latestQuery.data, configuredQueries.data)
+    return latestSnapshotPerQuery(filtered)
+  }, [latestQuery.data, configuredQueries.data])
 
-  const chart = useMemo(
-    () => (dailyQuery.data ? pivotDailyMax(dailyQuery.data) : { queries: [], points: [] }),
-    [dailyQuery.data],
-  )
+  const chart = useMemo(() => {
+    if (!dailyQuery.data) {
+      return { queries: [], points: [] }
+    }
+    return pivotDailyMax(filterRowsByConfiguredQueries(dailyQuery.data, configuredQueries.data))
+  }, [dailyQuery.data, configuredQueries.data])
+
+  const metricsLoading =
+    configuredQueries.isLoading || latestQuery.isLoading || dailyQuery.isLoading
 
   return (
     <div className="space-y-8">
@@ -38,7 +49,8 @@ export function Dashboard() {
           <div>
             <h1 className="text-2xl font-semibold text-white">Dashboard</h1>
             <p className="mt-1 text-sm text-slate-400">
-              Daily max agent counts per query (aligned with SentinelOne usage semantics).
+              Daily max agent counts per query (aligned with SentinelOne usage semantics). Only
+              queries listed in <code className="text-slate-300">queries.json</code> are shown.
             </p>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -57,7 +69,15 @@ export function Dashboard() {
           </label>
         </div>
 
-        {dailyQuery.isLoading && <p className="text-slate-400">Loading daily max…</p>}
+        {configuredQueries.error && (
+          <p className="text-red-300">
+            Could not load queries.json:{' '}
+            {configuredQueries.error instanceof Error
+              ? configuredQueries.error.message
+              : 'unknown error'}
+          </p>
+        )}
+        {metricsLoading && <p className="text-slate-400">Loading…</p>}
         {dailyQuery.error && (
           <p className="text-red-300">
             {dailyQuery.error instanceof Error ? dailyQuery.error.message : 'Failed to load chart'}

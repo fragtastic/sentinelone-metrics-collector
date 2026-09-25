@@ -61,6 +61,11 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return JSON.parse(text) as HealthResponse
 }
 
+export async function fetchQueries(): Promise<string[]> {
+  const response = await apiFetch(buildUrl('/metrics/queries'))
+  return parseJson<string[]>(response)
+}
+
 export async function fetchLatest(limit = 200, query?: string): Promise<LatestMetric[]> {
   const response = await apiFetch(buildUrl('/metrics/latest', { limit, query }))
   return parseJson<LatestMetric[]>(response)

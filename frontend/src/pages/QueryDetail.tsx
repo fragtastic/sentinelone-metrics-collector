@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { fetchHourlyMax } from '../api/client'
+import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
 import { pivotHourlyMax } from '../lib/chartData'
+import { isConfiguredQuery } from '../lib/filterConfiguredQueries'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
 import { MultiSeriesLineChart } from '../components/MultiSeriesLineChart'
 
@@ -10,11 +12,13 @@ export function QueryDetail() {
   const { encodedQuery } = useParams()
   const query = encodedQuery ? decodeURIComponent(encodedQuery) : ''
   const [days, setDays] = useState(7)
+  const configuredQueries = useConfiguredQueries()
+  const queryActive = isConfiguredQuery(query, configuredQueries.data)
 
   const hourlyQuery = useQuery({
     queryKey: ['metrics', 'hourly-max', days, query],
     queryFn: () => fetchHourlyMax({ days, query }),
-    enabled: Boolean(query),
+    enabled: Boolean(query) && queryActive,
   })
 
   const chart = useMemo(
@@ -51,6 +55,13 @@ export function QueryDetail() {
           </select>
         </label>
       </div>
+
+      {configuredQueries.isSuccess && !queryActive && (
+        <p className="text-amber-200">
+          This query is not in the current <code className="text-amber-100">queries.json</code>{' '}
+          list (retired or removed). Historical data is hidden in the UI by default.
+        </p>
+      )}
 
       {hourlyQuery.isLoading && <p className="text-slate-400">Loading hourly max…</p>}
       {hourlyQuery.error && (

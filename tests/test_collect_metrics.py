@@ -202,6 +202,13 @@ def test_metrics_range_validation(metrics_module):
     assert resp.status_code == 400
 
 
+def test_metrics_queries_lists_config(metrics_module):
+    client = metrics_module.app.test_client()
+    resp = client.get("/metrics/queries")
+    assert resp.status_code == 200
+    assert resp.get_json() == ["q1"]
+
+
 def test_hourly_max_hours_and_raw(metrics_module):
     cm = metrics_module
     con = duckdb.connect(cm.DB_PATH)
