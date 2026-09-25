@@ -152,8 +152,18 @@ curl -H "Authorization: Bearer YOUR_API_TOKEN" \
 
 - `GET /metrics/hourly-max`
 - Query params:
-  - `days` (default 7, max `API_MAX_RANGE_DAYS`)
+  - `hours` (optional; max `API_MAX_RANGE_DAYS * 24`) — last N hours, hourly buckets
+  - `days` (default 7 when `hours` omitted, max `API_MAX_RANGE_DAYS`)
   - `query` (optional exact query filter)
+
+### Raw collection samples (recent window)
+
+- `GET /metrics/raw`
+- Query params:
+  - `hours` (default 24, max `API_MAX_RANGE_DAYS * 24`)
+  - `query` (optional exact query filter)
+  - `limit` (default `API_MAX_RESULT_ROWS`, max same)
+- Returns individual samples (`timestamp`, `query`, `result`) in the window, ordered oldest first — same shape as `/metrics/latest`, filtered by time
 
 ## Local testing with Docker Compose
 

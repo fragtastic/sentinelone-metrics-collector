@@ -36,6 +36,25 @@ export function pivotHourlyMax(
   return { queries, points }
 }
 
+export function pivotRawSamples(
+  rows: { timestamp: string; query: string; result: number | null }[],
+  queryFilter?: string,
+): { queries: string[]; points: TimeSeriesPoint[] } {
+  const filtered = queryFilter ? rows.filter((r) => r.query === queryFilter) : rows
+  const queries = [...new Set(filtered.map((r) => r.query))].sort()
+  const byTime = new Map<string, TimeSeriesPoint>()
+  for (const row of filtered) {
+    let point = byTime.get(row.timestamp)
+    if (!point) {
+      point = { time: row.timestamp }
+      byTime.set(row.timestamp, point)
+    }
+    point[row.query] = row.result
+  }
+  const points = [...byTime.values()].sort((a, b) => String(a.time).localeCompare(String(b.time)))
+  return { queries, points }
+}
+
 export function latestSnapshotPerQuery(
   rows: { timestamp: string; query: string; result: number | null }[],
 ): { timestamp: string; query: string; result: number | null }[] {

@@ -13,7 +13,7 @@ export function QueryDetail() {
 
   const hourlyQuery = useQuery({
     queryKey: ['metrics', 'hourly-max', days, query],
-    queryFn: () => fetchHourlyMax(days, query),
+    queryFn: () => fetchHourlyMax({ days, query }),
     enabled: Boolean(query),
   })
 

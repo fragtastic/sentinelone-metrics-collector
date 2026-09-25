@@ -13,6 +13,12 @@ export function Layout() {
             <Link to="/" className="text-slate-300 hover:text-white">
               Dashboard
             </Link>
+            <Link to="/hourly-max" className="text-slate-300 hover:text-white">
+              Hourly max
+            </Link>
+            <Link to="/raw" className="text-slate-300 hover:text-white">
+              Raw counts
+            </Link>
             <Link to="/explore" className="text-slate-300 hover:text-white">
               Range explorer
             </Link>

@@ -71,9 +71,20 @@ export async function fetchDailyMax(days: number): Promise<DailyMaxRow[]> {
   return parseJson<DailyMaxRow[]>(response)
 }
 
-export async function fetchHourlyMax(days: number, query?: string): Promise<HourlyMaxRow[]> {
-  const response = await apiFetch(buildUrl('/metrics/hourly-max', { days, query }))
+export async function fetchHourlyMax(
+  options: { days: number; query?: string } | { hours: number; query?: string },
+): Promise<HourlyMaxRow[]> {
+  const params =
+    'hours' in options
+      ? { hours: options.hours, query: options.query }
+      : { days: options.days, query: options.query }
+  const response = await apiFetch(buildUrl('/metrics/hourly-max', params))
   return parseJson<HourlyMaxRow[]>(response)
+}
+
+export async function fetchRaw(hours: number, query?: string): Promise<LatestMetric[]> {
+  const response = await apiFetch(buildUrl('/metrics/raw', { hours, query }))
+  return parseJson<LatestMetric[]>(response)
 }
 
 export async function fetchRange(

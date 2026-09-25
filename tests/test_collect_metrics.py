@@ -200,3 +200,33 @@ def test_metrics_range_validation(metrics_module):
     client = metrics_module.app.test_client()
     resp = client.get("/metrics/range?from=2026-01-02&to=2026-01-01")
     assert resp.status_code == 400
+
+
+def test_hourly_max_hours_and_raw(metrics_module):
+    cm = metrics_module
+    con = duckdb.connect(cm.DB_PATH)
+    try:
+        cm.ensure_schema(con)
+        con.execute(
+            """
+            INSERT INTO s1_metrics (Timestamp, Query, Result) VALUES
+                (now(), 'q1', 10),
+                (now(), 'q1', 50),
+                (now(), 'q2', 20)
+            """
+        )
+    finally:
+        con.close()
+
+    client = cm.app.test_client()
+    hourly = client.get("/metrics/hourly-max?hours=24")
+    assert hourly.status_code == 200
+    hourly_rows = hourly.get_json()
+    assert any(r["query"] == "q1" and r["max_result"] == 50 for r in hourly_rows)
+
+    raw = client.get("/metrics/raw?hours=24")
+    assert raw.status_code == 200
+    raw_rows = raw.get_json()
+    q1_values = sorted(r["result"] for r in raw_rows if r["query"] == "q1")
+    assert q1_values == [10, 50]
+    assert [r["result"] for r in raw_rows if r["query"] == "q2"] == [20]

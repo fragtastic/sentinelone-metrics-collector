@@ -21,6 +21,7 @@ DEFAULT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MAX_QUERY_WORKERS = int(os.getenv("MAX_QUERY_WORKERS", "8"))
 DEFAULT_NICE_ADJUST = int(os.getenv("PROCESS_NICE_ADJUST", "10"))
 MAX_RANGE_DAYS = int(os.getenv("API_MAX_RANGE_DAYS", "31"))
+MAX_RANGE_HOURS = MAX_RANGE_DAYS * 24
 MAX_RESULT_ROWS = int(os.getenv("API_MAX_RESULT_ROWS", "10000"))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 _cors_origins_raw = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
@@ -513,8 +514,78 @@ def daily_max() -> Any:
 
 @app.get("/metrics/hourly-max")
 def hourly_max() -> Any:
-    days, err = parse_int_query_param(
-        "days", request.args.get("days"), default=7, minimum=1, maximum=MAX_RANGE_DAYS
+    hours_raw = request.args.get("hours")
+    if hours_raw is not None and hours_raw != "":
+        window_amount, err = parse_int_query_param(
+            "hours", hours_raw, default=24, minimum=1, maximum=MAX_RANGE_HOURS
+        )
+        if err:
+            body, status = err
+            return jsonify(body), status
+        window_predicate = "Timestamp >= now() - (? * INTERVAL '1 hour')"
+    else:
+        window_amount, err = parse_int_query_param(
+            "days", request.args.get("days"), default=7, minimum=1, maximum=MAX_RANGE_DAYS
+        )
+        if err:
+            body, status = err
+            return jsonify(body), status
+        window_predicate = "Timestamp >= now() - (? * INTERVAL '1 day')"
+
+    query_filter = request.args.get("query")
+
+    con = get_read_connection()
+    try:
+        if query_filter:
+            rows = con.execute(
+                f"""
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MAX(Result) AS max_result
+                FROM s1_metrics
+                WHERE {window_predicate}
+                  AND Query = ?
+                GROUP BY hour, Query
+                ORDER BY hour ASC, Query
+                """,
+                (window_amount, query_filter),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                f"""
+                SELECT
+                    date_trunc('hour', Timestamp) AS hour,
+                    Query,
+                    MAX(Result) AS max_result
+                FROM s1_metrics
+                WHERE {window_predicate}
+                GROUP BY hour, Query
+                ORDER BY hour ASC, Query
+                """,
+                (window_amount,),
+            ).fetchall()
+    finally:
+        con.close()
+
+    return jsonify([{"hour": str(r[0]), "query": r[1], "max_result": r[2]} for r in rows])
+
+
+@app.get("/metrics/raw")
+def metrics_raw() -> Any:
+    hours, err = parse_int_query_param(
+        "hours", request.args.get("hours"), default=24, minimum=1, maximum=MAX_RANGE_HOURS
+    )
+    if err:
+        body, status = err
+        return jsonify(body), status
+
+    limit, err = parse_int_query_param(
+        "limit",
+        request.args.get("limit"),
+        default=MAX_RESULT_ROWS,
+        minimum=1,
+        maximum=MAX_RESULT_ROWS,
     )
     if err:
         body, status = err
@@ -527,36 +598,32 @@ def hourly_max() -> Any:
         if query_filter:
             rows = con.execute(
                 """
-                SELECT
-                    date_trunc('hour', Timestamp) AS hour,
-                    Query,
-                    MAX(Result) AS max_result
+                SELECT Timestamp, Query, Result
                 FROM s1_metrics
-                WHERE Timestamp >= now() - (? * INTERVAL '1 day')
+                WHERE Timestamp >= now() - (? * INTERVAL '1 hour')
                   AND Query = ?
-                GROUP BY hour, Query
-                ORDER BY hour DESC, Query
+                ORDER BY Timestamp ASC, Query
+                LIMIT ?
                 """,
-                (days, query_filter),
+                (hours, query_filter, limit),
             ).fetchall()
         else:
             rows = con.execute(
                 """
-                SELECT
-                    date_trunc('hour', Timestamp) AS hour,
-                    Query,
-                    MAX(Result) AS max_result
+                SELECT Timestamp, Query, Result
                 FROM s1_metrics
-                WHERE Timestamp >= now() - (? * INTERVAL '1 day')
-                GROUP BY hour, Query
-                ORDER BY hour DESC, Query
+                WHERE Timestamp >= now() - (? * INTERVAL '1 hour')
+                ORDER BY Timestamp ASC, Query
+                LIMIT ?
                 """,
-                (days,),
+                (hours, limit),
             ).fetchall()
     finally:
         con.close()
 
-    return jsonify([{"hour": str(r[0]), "query": r[1], "max_result": r[2]} for r in rows])
+    return jsonify(
+        [{"timestamp": str(r[0]), "query": r[1], "result": r[2]} for r in rows]
+    )
 
 
 def _static_dir_ready() -> bool:
