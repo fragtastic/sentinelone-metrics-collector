@@ -18,10 +18,14 @@ def metrics_module(tmp_path, monkeypatch):
     monkeypatch.setenv("SENTINELONE_URL", "example")
     monkeypatch.setenv("SENTINELONE_AUTH_TOKEN", "token")
     monkeypatch.delenv("API_TOKEN", raising=False)
+    monkeypatch.delenv("OIDC_ISSUER", raising=False)
+    monkeypatch.delenv("OIDC_AUDIENCE", raising=False)
+    monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
     monkeypatch.setenv("STORE_FAILED_AS", "null")
 
-    if "collect_metrics" in sys.modules:
-        del sys.modules["collect_metrics"]
+    for name in ("collect_metrics", "metrics_auth"):
+        if name in sys.modules:
+            del sys.modules[name]
     cm = importlib.import_module("collect_metrics")
     yield cm
     if cm.collector is not None:
@@ -53,7 +57,9 @@ def test_parse_int_query_param_invalid(metrics_module):
 
 
 def test_api_token_required(metrics_module, monkeypatch):
-    monkeypatch.setattr(metrics_module, "API_TOKEN", "secret-token")
+    import metrics_auth
+
+    monkeypatch.setattr(metrics_auth, "API_TOKEN", "secret-token")
     client = metrics_module.app.test_client()
     # /healthz does not require a token (may be 503 when collector is not running).
     assert client.get("/healthz").status_code in (200, 503)
@@ -65,6 +71,54 @@ def test_api_token_required(metrics_module, monkeypatch):
         ).status_code
         == 200
     )
+
+
+def test_oidc_bearer_on_metrics(metrics_module, monkeypatch):
+    import metrics_auth
+
+    monkeypatch.setattr(metrics_auth, "API_TOKEN", None)
+    monkeypatch.setattr(metrics_auth, "OIDC_ISSUER", "https://issuer.example.com")
+    monkeypatch.setattr(
+        metrics_auth, "verify_oidc_access_token", lambda token: token == "valid-jwt"
+    )
+    client = metrics_module.app.test_client()
+    assert client.get("/metrics/latest").status_code == 401
+    assert (
+        client.get(
+            "/metrics/latest",
+            headers={"Authorization": "Bearer valid-jwt"},
+        ).status_code
+        == 200
+    )
+
+
+def test_cors_allows_configured_origin(monkeypatch):
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://ui.example.com")
+    monkeypatch.setenv("METRICS_DB_PATH", ":memory:")
+    for name in ("collect_metrics", "metrics_auth"):
+        if name in sys.modules:
+            del sys.modules[name]
+    cm = importlib.import_module("collect_metrics")
+    client = cm.app.test_client()
+    resp = client.open(
+        "/metrics/latest",
+        method="OPTIONS",
+        headers={
+            "Origin": "https://ui.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 204
+    assert resp.headers.get("Access-Control-Allow-Origin") == "https://ui.example.com"
+
+
+def test_api_token_not_required_for_static_when_ui_missing(metrics_module, monkeypatch):
+    import metrics_auth
+
+    monkeypatch.setattr(metrics_auth, "API_TOKEN", "secret-token")
+    client = metrics_module.app.test_client()
+    assert client.get("/").status_code == 404
+    assert client.get("/explore").status_code == 404
 
 
 def test_healthz_without_collector(metrics_module, monkeypatch):

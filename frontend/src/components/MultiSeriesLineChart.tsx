@@ -1,0 +1,62 @@
+import ReactECharts from 'echarts-for-react'
+import type { EChartsOption } from 'echarts'
+import { colorForQuery } from '../lib/queryColors'
+import { formatQueryLabel } from '../lib/formatQueryLabel'
+import type { TimeSeriesPoint } from '../lib/chartData'
+
+type Props = {
+  title: string
+  queries: string[]
+  points: TimeSeriesPoint[]
+  timeKey?: string
+  height?: number
+}
+
+export function MultiSeriesLineChart({
+  title,
+  queries,
+  points,
+  timeKey = 'time',
+  height = 360,
+}: Props) {
+  const times = points.map((p) => String(p[timeKey]))
+  const series = queries.map((query) => ({
+    name: formatQueryLabel(query),
+    type: 'line' as const,
+    connectNulls: false,
+    showSymbol: false,
+    smooth: true,
+    itemStyle: { color: colorForQuery(query) },
+    data: points.map((p) => (p[query] === undefined ? null : (p[query] as number | null))),
+  }))
+
+  const option: EChartsOption = {
+    backgroundColor: 'transparent',
+    title: {
+      text: title,
+      left: 0,
+      textStyle: { color: '#e7ecf1', fontSize: 16, fontWeight: 600 },
+    },
+    tooltip: { trigger: 'axis' },
+    legend: {
+      type: 'scroll',
+      bottom: 0,
+      textStyle: { color: '#cbd5e1' },
+    },
+    grid: { left: 48, right: 16, top: 48, bottom: 72 },
+    xAxis: {
+      type: 'category',
+      data: times,
+      axisLabel: { color: '#94a3b8', rotate: times.length > 14 ? 35 : 0 },
+      axisLine: { lineStyle: { color: '#475569' } },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#94a3b8' },
+      splitLine: { lineStyle: { color: '#334155' } },
+    },
+    series,
+  }
+
+  return <ReactECharts option={option} style={{ height }} notMerge lazyUpdate />
+}
