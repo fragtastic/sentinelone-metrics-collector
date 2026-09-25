@@ -5,6 +5,7 @@ import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { fetchRange } from '../api/client'
 import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
+import { CHART_GRID_WITH_RIGHT_LEGEND, verticalScrollLegend } from '../lib/chartLegendOptions'
 import { filterRowsByConfiguredQueries } from '../lib/filterConfiguredQueries'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
 import { colorForQuery } from '../lib/queryColors'
@@ -59,7 +60,9 @@ export function RangeExplorer() {
     void rangeQuery.refetch()
   }
 
-  const chartOption: EChartsOption | null = useMemo(() => {
+  const rangeChartHeight = 400
+
+  const rangeChartOption = useMemo((): EChartsOption | null => {
     if (!rangeQuery.data?.length) {
       return null
     }
@@ -80,8 +83,9 @@ export function RangeExplorer() {
       const color = colorForQuery(q)
       const maxData = times.map((t) => byHour.get(t)?.max_result ?? null)
 
+      const maxLabel = `${formatQueryLabel(q)} (max)`
       series.push({
-        name: `${formatQueryLabel(q)} (max)`,
+        name: maxLabel,
         type: 'line',
         connectNulls: false,
         showSymbol: false,
@@ -89,10 +93,10 @@ export function RangeExplorer() {
         itemStyle: { color },
         data: maxData,
       })
-
       if (showBand) {
+        const minLabel = `${formatQueryLabel(q)} (min)`
         series.push({
-          name: `${formatQueryLabel(q)} (min)`,
+          name: minLabel,
           type: 'line',
           connectNulls: false,
           showSymbol: false,
@@ -100,8 +104,9 @@ export function RangeExplorer() {
           itemStyle: { color },
           data: times.map((t) => byHour.get(t)?.min_result ?? null),
         })
+        const avgLabel = `${formatQueryLabel(q)} (avg)`
         series.push({
-          name: `${formatQueryLabel(q)} (avg)`,
+          name: avgLabel,
           type: 'line',
           connectNulls: false,
           showSymbol: false,
@@ -120,12 +125,16 @@ export function RangeExplorer() {
         textStyle: { color: '#e7ecf1', fontSize: 16, fontWeight: 600 },
       },
       tooltip: { trigger: 'axis' },
-      legend: { type: 'scroll', bottom: 0, textStyle: { color: '#cbd5e1' } },
-      grid: { left: 48, right: 16, top: 48, bottom: 72 },
+      legend: verticalScrollLegend(),
+      grid: { ...CHART_GRID_WITH_RIGHT_LEGEND },
       xAxis: {
         type: 'category',
         data: times,
-        axisLabel: { color: '#94a3b8', rotate: 35 },
+        axisLabel: {
+          color: '#94a3b8',
+          hideOverlap: true,
+          formatter: (value: string) => (value.length > 16 ? `${value.slice(0, 16)}…` : value),
+        },
         axisLine: { lineStyle: { color: '#475569' } },
       },
       yAxis: {
@@ -208,8 +217,13 @@ export function RangeExplorer() {
 
       {rangeQuery.isFetching && <p className="text-slate-400">Loading range…</p>}
 
-      {chartOption && (
-        <ReactECharts option={chartOption} style={{ height: 400 }} notMerge lazyUpdate />
+      {rangeChartOption && (
+        <ReactECharts
+          option={rangeChartOption}
+          style={{ height: rangeChartHeight }}
+          notMerge
+          lazyUpdate
+        />
       )}
     </div>
   )

@@ -3,6 +3,7 @@ import type { EChartsOption } from 'echarts'
 import { colorForQuery } from '../lib/queryColors'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
 import type { TimeSeriesPoint } from '../lib/chartData'
+import { CHART_GRID_WITH_RIGHT_LEGEND, verticalScrollLegend } from '../lib/chartLegendOptions'
 
 type Props = {
   title: string
@@ -38,16 +39,16 @@ export function MultiSeriesLineChart({
       textStyle: { color: '#e7ecf1', fontSize: 16, fontWeight: 600 },
     },
     tooltip: { trigger: 'axis' },
-    legend: {
-      type: 'scroll',
-      bottom: 0,
-      textStyle: { color: '#cbd5e1' },
-    },
-    grid: { left: 48, right: 16, top: 48, bottom: 72 },
+    legend: verticalScrollLegend(),
+    grid: { ...CHART_GRID_WITH_RIGHT_LEGEND },
     xAxis: {
       type: 'category',
       data: times,
-      axisLabel: { color: '#94a3b8', rotate: times.length > 14 ? 35 : 0 },
+      axisLabel: {
+        color: '#94a3b8',
+        hideOverlap: true,
+        formatter: (value: string) => (value.length > 16 ? `${value.slice(0, 16)}…` : value),
+      },
       axisLine: { lineStyle: { color: '#475569' } },
     },
     yAxis: {
