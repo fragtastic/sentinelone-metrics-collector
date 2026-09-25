@@ -5,6 +5,7 @@ import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { fetchRange } from '../api/client'
 import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
+import { useLegendWheelScroll } from '../hooks/useLegendWheelScroll'
 import { usePersistedLegendSelection } from '../hooks/usePersistedLegendSelection'
 import { CHART_GRID_WITH_RIGHT_LEGEND, verticalScrollLegend } from '../lib/chartLegendOptions'
 import { filterRowsByConfiguredQueries } from '../lib/filterConfiguredQueries'
@@ -138,6 +139,7 @@ export function RangeExplorer() {
   }, [rangeChartData])
 
   const { legendSelected, legendChartEvents } = usePersistedLegendSelection(rangeSeriesNames)
+  const { onChartReady: onLegendWheelReady } = useLegendWheelScroll()
 
   const rangeChartOption = useMemo((): EChartsOption | null => {
     if (!rangeChartData) {
@@ -250,6 +252,7 @@ export function RangeExplorer() {
           notMerge
           lazyUpdate
           onEvents={legendChartEvents}
+          onChartReady={onLegendWheelReady}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { useMemo } from 'react'
+import { useLegendWheelScroll } from '../hooks/useLegendWheelScroll'
 import { usePersistedLegendSelection } from '../hooks/usePersistedLegendSelection'
 import { colorForQuery } from '../lib/queryColors'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
@@ -24,6 +25,7 @@ export function MultiSeriesLineChart({
 }: Props) {
   const seriesNames = useMemo(() => queries.map((query) => formatQueryLabel(query)), [queries])
   const { legendSelected, legendChartEvents } = usePersistedLegendSelection(seriesNames)
+  const { onChartReady: onLegendWheelReady } = useLegendWheelScroll()
 
   const times = points.map((p) => String(p[timeKey]))
   const series = queries.map((query) => ({
@@ -71,6 +73,7 @@ export function MultiSeriesLineChart({
       notMerge
       lazyUpdate
       onEvents={legendChartEvents}
+      onChartReady={onLegendWheelReady}
     />
   )
 }
