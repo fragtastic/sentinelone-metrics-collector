@@ -14,7 +14,10 @@ export function RawRecent() {
   })
 
   const chart = useMemo(
-    () => (rawQuery.data ? pivotRawSamples(rawQuery.data) : { queries: [], points: [] }),
+    () =>
+      rawQuery.data
+        ? pivotRawSamples(rawQuery.data, undefined, { displayMinuteBuckets: true })
+        : { queries: [], points: [] },
     [rawQuery.data],
   )
 
@@ -24,7 +27,7 @@ export function RawRecent() {
         <div>
           <h1 className="text-2xl font-semibold text-white">Raw counts (recent)</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Each collection sample as a point on the timeline (no hourly bucketing). Values are
+            Each collection sample on the timeline (x-axis shown to the UTC minute). Values are
             the agent counts returned for each query at collect time.
           </p>
         </div>
