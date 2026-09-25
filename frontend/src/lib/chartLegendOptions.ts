@@ -1,7 +1,10 @@
 import type { EChartsOption } from 'echarts'
 
 /** Built-in ECharts legend: vertical, scrollable, on the right (toggle series on click). */
-export function verticalScrollLegend(width = 200): EChartsOption['legend'] {
+export function verticalScrollLegend(
+  width = 200,
+  selected?: Record<string, boolean>,
+): EChartsOption['legend'] {
   return {
     type: 'scroll',
     orient: 'vertical',
@@ -17,6 +20,7 @@ export function verticalScrollLegend(width = 200): EChartsOption['legend'] {
     pageIconColor: '#94a3b8',
     pageTextStyle: { color: '#94a3b8' },
     tooltip: { show: true },
+    ...(selected ? { selected } : {}),
   }
 }
 

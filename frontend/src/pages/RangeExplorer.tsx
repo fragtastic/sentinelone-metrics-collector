@@ -5,6 +5,7 @@ import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { fetchRange } from '../api/client'
 import { useConfiguredQueries } from '../hooks/useConfiguredQueries'
+import { usePersistedLegendSelection } from '../hooks/usePersistedLegendSelection'
 import { CHART_GRID_WITH_RIGHT_LEGEND, verticalScrollLegend } from '../lib/chartLegendOptions'
 import { filterRowsByConfiguredQueries } from '../lib/filterConfiguredQueries'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
@@ -62,7 +63,10 @@ export function RangeExplorer() {
 
   const rangeChartHeight = 400
 
-  const rangeChartOption = useMemo((): EChartsOption | null => {
+  const rangeChartData = useMemo((): {
+    series: EChartsOption['series']
+    times: string[]
+  } | null => {
     if (!rangeQuery.data?.length) {
       return null
     }
@@ -117,6 +121,28 @@ export function RangeExplorer() {
       }
     }
 
+    return { series, times }
+  }, [rangeQuery.data, queryFilter, showBand, configuredQueries.data])
+
+  const rangeSeriesNames = useMemo(() => {
+    if (!rangeChartData?.series || !Array.isArray(rangeChartData.series)) {
+      return []
+    }
+    return rangeChartData.series
+      .map((item) =>
+        typeof item === 'object' && item !== null && 'name' in item
+          ? String(item.name)
+          : '',
+      )
+      .filter(Boolean)
+  }, [rangeChartData])
+
+  const { legendSelected, legendChartEvents } = usePersistedLegendSelection(rangeSeriesNames)
+
+  const rangeChartOption = useMemo((): EChartsOption | null => {
+    if (!rangeChartData) {
+      return null
+    }
     return {
       backgroundColor: 'transparent',
       title: {
@@ -125,11 +151,11 @@ export function RangeExplorer() {
         textStyle: { color: '#e7ecf1', fontSize: 16, fontWeight: 600 },
       },
       tooltip: { trigger: 'axis' },
-      legend: verticalScrollLegend(),
+      legend: verticalScrollLegend(200, legendSelected),
       grid: { ...CHART_GRID_WITH_RIGHT_LEGEND },
       xAxis: {
         type: 'category',
-        data: times,
+        data: rangeChartData.times,
         axisLabel: {
           color: '#94a3b8',
           hideOverlap: true,
@@ -142,9 +168,9 @@ export function RangeExplorer() {
         axisLabel: { color: '#94a3b8' },
         splitLine: { lineStyle: { color: '#334155' } },
       },
-      series,
+      series: rangeChartData.series,
     }
-  }, [rangeQuery.data, queryFilter, showBand, configuredQueries.data])
+  }, [rangeChartData, legendSelected])
 
   return (
     <div className="space-y-6">
@@ -223,6 +249,7 @@ export function RangeExplorer() {
           style={{ height: rangeChartHeight }}
           notMerge
           lazyUpdate
+          onEvents={legendChartEvents}
         />
       )}
     </div>

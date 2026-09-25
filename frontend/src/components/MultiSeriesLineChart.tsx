@@ -1,5 +1,7 @@
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
+import { useMemo } from 'react'
+import { usePersistedLegendSelection } from '../hooks/usePersistedLegendSelection'
 import { colorForQuery } from '../lib/queryColors'
 import { formatQueryLabel } from '../lib/formatQueryLabel'
 import type { TimeSeriesPoint } from '../lib/chartData'
@@ -20,6 +22,9 @@ export function MultiSeriesLineChart({
   timeKey = 'time',
   height = 360,
 }: Props) {
+  const seriesNames = useMemo(() => queries.map((query) => formatQueryLabel(query)), [queries])
+  const { legendSelected, legendChartEvents } = usePersistedLegendSelection(seriesNames)
+
   const times = points.map((p) => String(p[timeKey]))
   const series = queries.map((query) => ({
     name: formatQueryLabel(query),
@@ -39,7 +44,7 @@ export function MultiSeriesLineChart({
       textStyle: { color: '#e7ecf1', fontSize: 16, fontWeight: 600 },
     },
     tooltip: { trigger: 'axis' },
-    legend: verticalScrollLegend(),
+    legend: verticalScrollLegend(200, legendSelected),
     grid: { ...CHART_GRID_WITH_RIGHT_LEGEND },
     xAxis: {
       type: 'category',
@@ -59,5 +64,13 @@ export function MultiSeriesLineChart({
     series,
   }
 
-  return <ReactECharts option={option} style={{ height }} notMerge lazyUpdate />
+  return (
+    <ReactECharts
+      option={option}
+      style={{ height }}
+      notMerge
+      lazyUpdate
+      onEvents={legendChartEvents}
+    />
+  )
 }
