@@ -179,7 +179,7 @@ The container includes a Docker `HEALTHCHECK` that calls `GET http://127.0.0.1:8
 
 See `IMPLEMENTATION_PLAN.md` for tracking. Notable deferred items:
 
-- **Data retention:** configurable env-driven purge or archive (all history kept today).
+- **Data retention / compaction:** env-driven roll-up and purge (all raw history kept today). SentinelOne usage is **max count per day**; their metering uses a **5-minute** cadence—future compaction should retain daily (and optionally 5-min/hourly) **max** per query, not necessarily every minute sample forever. See `IMPLEMENTATION_PLAN.md`.
 - **SSO web UI** with client-side charts (separate frontend).
 - **Production WSGI** (e.g. gunicorn) if traffic or hardening requirements grow.
 

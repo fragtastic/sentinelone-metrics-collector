@@ -23,7 +23,8 @@ MAX_RANGE_DAYS = int(os.getenv("API_MAX_RANGE_DAYS", "31"))
 MAX_RESULT_ROWS = int(os.getenv("API_MAX_RESULT_ROWS", "10000"))
 API_TOKEN = os.getenv("API_TOKEN", "").strip() or None
 
-# TODO: Configurable retention (e.g. RETENTION_DAYS env) to purge or archive old rows.
+# TODO: Retention/compaction (see IMPLEMENTATION_PLAN.md): S1 usage = daily max per query;
+# roll up raw samples to daily (and optionally 5-min/hourly) max before purge.
 
 
 def _normalize_store_failed_as(raw: str) -> str:
